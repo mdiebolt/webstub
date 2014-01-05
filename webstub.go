@@ -14,7 +14,7 @@ type Gist struct {
   Id string
   Description string
   User User
-  Files File
+  Files map[string]File
 }
 
 type User struct {
@@ -66,9 +66,39 @@ func handlerIcon(w http.ResponseWriter, r *http.Request) {}
 func handlerRoot(w http.ResponseWriter, r *http.Request) {
   if r.Method == "GET" {
     gistId := parseRequest(r)
+    nonJSONFile := false
 
-    output, _ := getGist(gistId)
-    fmt.Printf("%+v", output)
+    if _, okay := global.FileIndex[gistId]; !okay {
+      global.FileIndex[gistId] = 0
+    }
+
+    output, err := getGist(gistId)
+    panicError(err)
+
+    res := ""
+    index := 0
+    for _, v := range output.Files {
+      if v.Type != "JSON" {
+        nonJSONFile = true
+      }
+
+      if global.FileIndex[gistId] == index {
+        res = v.Content
+      }
+
+      index += 1
+    }
+
+    w.Header().Set("Content-Type", "application/json")
+
+    if nonJSONFile {
+      fmt.Fprint(w, Response{"message": "One or more of the files in this Gist aren't JSON"})
+    } else if len(output.Files) == 0 {
+      fmt.Fprint(w, Response{"message": "This Gist doesn't have any files"})
+    } else {
+      global.FileIndex[gistId] = (global.FileIndex[gistId] + 1) % (len(output.Files))
+      fmt.Fprint(w, res)
+    }
   }
 }
 
@@ -80,8 +110,26 @@ func port() string {
   return os.Getenv("PORT")
 }
 
+var global struct {
+  FileIndex map[string]int
+}
+
+type Response map[string]interface{}
+
+func (r Response) String() (s string) {
+  b, err := json.Marshal(r)
+  if err != nil {
+    s = ""
+    return
+  }
+  s = string(b)
+  return
+}
+
 func main() {
   port := port()
+
+  global.FileIndex = make(map[string]int, 100)
 
   http.HandleFunc("/favicon.ico", handlerIcon)
   http.HandleFunc("/", handlerRoot)
